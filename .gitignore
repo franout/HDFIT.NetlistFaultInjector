@@ -12,3 +12,6 @@ test/obj_dir/
 test/test
 
 test/fmaFiSignals.cpp
+
+## the executable
+netlistFaultInjector
