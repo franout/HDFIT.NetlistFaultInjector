@@ -1,7 +1,11 @@
-
 CC = gcc
 CXX = g++
 RM = rm -f
+MKDIR = mkdir 
+
+DEFINES ?= 
+
+INCLUDES = -I./src/common -I./src/rtl -I./src/gate
 
 CPPFLAGS = -pedantic \
 		-Wall \
@@ -9,26 +13,36 @@ CPPFLAGS = -pedantic \
 		-Wno-sign-compare \
 		-Wno-unused-parameter \
 		-Werror \
+		$(INCLUDES) \
+		$(DEFINES) \
 		-march=native \
 		-std=c++17
 
+LDFLAGS= -fopenmp
+
 EXE = netlistFaultInjector
 
-SRCS = main.cpp RtlFile.cpp
-OBJS = $(subst .cpp,.o,$(SRCS))
+SRCS := ./src/main.cpp ./src/rtl/RtlFile.cpp ./src/gate/GateLFile.cpp ./src/common/common.cpp
+OBJS := $(patsubst ./src/%.cpp, ./build/%.o, $(SRCS))
 
 all: $(EXE)
 
 $(EXE): $(OBJS)
-	$(CXX) $(LDFLAGS) -o $(EXE) $(OBJS) $(LDLIBS)
+	$(CXX)  $(CPPFLAGS) $(LDFLAGS)  -o $(EXE) $(OBJS) 
 
 depend: .depend
 
+build/%.o: ./src/%.cpp
+	@if [ ! -d "$(dir $@)" ]; then $(MKDIR) $(dir $@); fi
+	$(CXX) $(CPPFLAGS) $(LDFLAGS) -c $< -o $@
+
 .depend: $(SRCS)
 	$(RM) ./.depend
-	$(CXX) $(CPPFLAGS) -MM $^>>./.depend;
+	$(CXX) $(CPPFLAGS)  -MM $^ >> ./.depend;
 
-clean :
-	${RM} ${EXE} *.o
+clean:
+	$(RM) -r  ./build
+	$(RM) $(EXE) $(OBJS)
 
-include .depend
+# Include the generated dependency files if they exist
+-include .depend

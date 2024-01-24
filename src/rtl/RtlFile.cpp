@@ -32,23 +32,6 @@ static size_t uuidGet()
 	return counter++;
 }
 
-static void backslashToDoubleBackslash(std::string * out, const std::string & in)
-{
-	out->resize(0);
-	out->reserve(2 * in.size());
-
-	for(const auto &elem: in)
-	{
-		if('\\' == elem)
-		{
-			out->append("\\\\");
-		}
-		else
-		{
-			out->push_back(elem);
-		}
-	}
-}
 
 RtlFile::RtlFile() {
 	// TODO Auto-generated constructor stub
@@ -124,27 +107,6 @@ int RtlFile::Get(const char * fileName, const std::string &topModule)
 	return 0;
 }
 
-static const char * strrstr(const char * haystack, const char * pos, const char * needle)
-{
-	const size_t needleLen = strlen(needle);
-
-	if(needleLen > pos - haystack)
-	{
-		return nullptr;
-	}
-
-	const char * currPos = pos - needleLen;
-	while(currPos - needleLen > haystack)
-	{
-		if(0 == strncmp(currPos, needle, needleLen))
-		{
-			return currPos;
-		}
-		currPos--;
-	}
-
-	return nullptr;
-}
 
 bool RtlFile::PosInsideComment(const char * pos, const char * start, const char * end)
 {
@@ -156,7 +118,7 @@ bool RtlFile::PosInsideComment(const char * pos, const char * start, const char 
 		if((nullptr != blockEnd) && (blockEnd < end))
 		{
 			// Is that blockEnd opened before pos?
-			const char * blockStart = strrstr(pos, blockEnd, blockCommentStartStr[blockType]);
+			const char * blockStart = ParseUtils::strrstr(pos, blockEnd, blockCommentStartStr[blockType]);
 			if(nullptr == blockStart)
 			{
 				return true;
@@ -294,7 +256,7 @@ int RtlFile::ModuleFind(std::string * name, const char ** start, const char ** e
 		return -2;
 	}
 
-	if(nullptr != strrstr(modNameEnd, modEnd, modStartStr))
+	if(nullptr != ParseUtils::strrstr(modNameEnd, modEnd, modStartStr))
 	{
 		nfiError("Module declaration inside module: %s\n", name->c_str());
 		return -3;
@@ -343,52 +305,6 @@ const char * RtlFile::NextNeedle(size_t * needleNr, const char * pHaystack, size
 	return ret;
 }
 
-static bool isSpace(char c)
-{
-	return (' ' == c) || ('\t' == c);
-}
-
-static const char * firstNonSpaceGet(const char * in)
-{
-	const char * out = in;
-	while(isSpace(*out))
-	{
-		out++;
-	}
-
-	return out;
-}
-
-static const char * lastNonSpaceGet(const char * in)
-{
-	const char * out = in;
-	while(isSpace(*out))
-	{
-		out--;
-	}
-
-	return out;
-}
-
-static const char * lastCharAfterGet(const char * in, const char * pNeedles, size_t nNeedles)
-{
-	const char * out = in;
-
-	while(*out)
-	{
-		for(size_t needle = 0; needle < nNeedles; needle++)
-		{
-			if(*out == pNeedles[needle])
-			{
-				return out + 1;
-			}
-		}
-
-		out--;
-	}
-
-	return out;
-}
 
 // searches before in for type declaration
 RtlFile::signalType_t RtlFile::TypeGet(const char ** declStart, const char * in, const char * inModuleStart)
@@ -396,7 +312,7 @@ RtlFile::signalType_t RtlFile::TypeGet(const char ** declStart, const char * in,
 	const char * typeStart[SIGNAL_TYPE_NROF];
 	for(size_t type = 0; type < SIGNAL_TYPE_NROF; type++)
 	{
-		typeStart[type] = strrstr(inModuleStart, in, SignalTypes[type]);
+		typeStart[type] = ParseUtils::strrstr(inModuleStart, in, SignalTypes[type]);
 	}
 
 	*declStart = inModuleStart;
@@ -493,180 +409,8 @@ const char * RtlFile::SignalDeclarationGet(const std::string &signalName, const 
 	return signalDecl;
 }
 
-// returns <= 0 on error, else signal width
-static int signalWidthGet(const char ** endWidth, const char * in)
-{
-	if('[' != in[0])
-	{
-		nfiError("First char expected to be [\n");
-		return -1;
-	}
-
-	char * widthColon;
-	long widthHigh = strtol(in + 1, &widthColon, 10);
-	if(in + 1 == widthColon)
-	{
-		nfiError("Found no number\n");
-		return -1;
-	}
-
-	if((LONG_MIN == widthHigh) || (LONG_MAX == widthHigh))
-	{
-		nfiError("Width doesn't fit long\n");
-		return -1;
-	}
-
-	if(':' != *widthColon)
-	{
-		nfiError("Expected colon after width high: %.30s\n", in);
-		return -1;
-	}
-
-	char * widthEnd;
-	long widthLow = strtol(widthColon + 1, &widthEnd, 10);
-	if(widthColon + 1 == widthEnd)
-	{
-		nfiError("Found no number\n");
-		return -1;
-	}
-
-	if((LONG_MIN == widthLow) || (LONG_MAX == widthLow))
-	{
-		nfiError("Width doesn't fit long\n");
-		return -1;
-	}
-
-	if(']' != *widthEnd)
-	{
-		nfiError("Expected ] after width low: %.30s\n", in);
-		return -1;
-	}
-
-	*endWidth = widthEnd;
-
-	return abs(widthHigh - widthLow) + 1;
-}
 
 // returns <= 0 on error, else signal width
-static int signalArraySizeGet(const char ** endArray, const char * in)
-{
-	if('[' != in[0])
-	{
-		nfiError("First char expected to be [\n");
-		return -1;
-	}
-
-	char * widthHighEnd;
-	long widthHigh = strtol(in + 1, &widthHighEnd, 10);
-	if(in + 1 == widthHighEnd)
-	{
-		nfiError("Found no number\n");
-		return -1;
-	}
-
-	if((LONG_MIN == widthHigh) || (LONG_MAX == widthHigh))
-	{
-		nfiError("Width doesn't fit long\n");
-		return -1;
-	}
-
-	if(']' == *widthHighEnd)
-	{
-		// System Verilog array declaration 'signal[arraySize]'
-		*endArray = widthHighEnd;
-		return widthHigh;
-	}
-
-	if(':' != *widthHighEnd)
-	{
-		nfiError("Expected colon after width high: %.30s\n", in);
-		return -1;
-	}
-
-	char * widthEnd;
-	long widthLow = strtol(widthHighEnd + 1, &widthEnd, 10);
-	if(widthHighEnd + 1 == widthEnd)
-	{
-		nfiError("Found no number\n");
-		return -1;
-	}
-
-	if((LONG_MIN == widthLow) || (LONG_MAX == widthLow))
-	{
-		nfiError("Width doesn't fit long\n");
-		return -1;
-	}
-
-	if(']' != *widthEnd)
-	{
-		nfiError("Expected ] after width low: %.30s\n", in);
-		return -1;
-	}
-
-	*endArray = widthEnd;
-
-	return abs(widthHigh - widthLow) + 1;
-}
-
-// returns <= 0 on error, else signal width
-static int subSignalArraySizeGet(const char ** endArray, const char * in)
-{
-	if('[' != in[0])
-	{
-		nfiError("First char expected to be [\n");
-		return -1;
-	}
-
-	char * widthHighEnd;
-	long widthHigh = strtol(in + 1, &widthHighEnd, 10);
-	if(in + 1 == widthHighEnd)
-	{
-		nfiError("Found no number\n");
-		return -1;
-	}
-
-	if((LONG_MIN == widthHigh) || (LONG_MAX == widthHigh))
-	{
-		nfiError("Width doesn't fit long\n");
-		return -1;
-	}
-
-	if(']' == *widthHighEnd)
-	{
-		*endArray = widthHighEnd;
-		return 1; // only one element chosen
-	}
-
-	if(':' != *widthHighEnd)
-	{
-		nfiError("Expected colon after width high: %.30s\n", in);
-		return -1;
-	}
-
-	char * widthEnd;
-	long widthLow = strtol(widthHighEnd + 1, &widthEnd, 10);
-	if(widthHighEnd + 1 == widthEnd)
-	{
-		nfiError("Found no number\n");
-		return -1;
-	}
-
-	if((LONG_MIN == widthLow) || (LONG_MAX == widthLow))
-	{
-		nfiError("Width doesn't fit long\n");
-		return -1;
-	}
-
-	if(']' != *widthEnd)
-	{
-		nfiError("Expected ] after width low: %.30s\n", in);
-		return -1;
-	}
-
-	*endArray = widthEnd;
-
-	return abs(widthHigh - widthLow) + 1;
-}
 
 int RtlFile::SignalDeclarationParse(signal_t * signal, const char * declaration)
 {
@@ -696,10 +440,10 @@ int RtlFile::SignalDeclarationParse(signal_t * signal, const char * declaration)
 
 	// Get width
 	const char * afterType = typeStart[signal->Type] + strlen(SignalTypes[signal->Type]);
-	afterType = firstNonSpaceGet(afterType);
+	afterType = ParseUtils::firstNonSpaceGet(afterType);
 	if('[' == *afterType)
 	{
-		int width = signalWidthGet(&afterType, afterType);
+		int width = ParseUtils::signalWidthGet(&afterType, afterType);
 		if(0 >= width)
 		{
 			nfiError("signalWidthGet failed: %.30s\n", declaration);
@@ -709,7 +453,7 @@ int RtlFile::SignalDeclarationParse(signal_t * signal, const char * declaration)
 		signal->Width = width;
 
 		afterType++; // after ]
-		afterType = firstNonSpaceGet(afterType);
+		afterType = ParseUtils::firstNonSpaceGet(afterType);
 	}
 	else
 	{
@@ -752,7 +496,7 @@ int RtlFile::SignalDeclarationParse(signal_t * signal, const char * declaration)
 	if((nullptr != arrayStart) && (arrayStart < endNameSemiColon))
 	{
 		const char * tmp;
-		int arraySize = signalArraySizeGet(&tmp, arrayStart);
+		int arraySize = ParseUtils::signalArraySizeGet(&tmp, arrayStart);
 		if(0 >= arraySize)
 		{
 			nfiError("signalArraySizeGet failed\n");
@@ -816,7 +560,7 @@ int RtlFile::SubSignalWidthGet(const std::string &inSubSignal, const char * inMo
 
 	// What width is subsignal
 	const char * tmp;
-	int arraySize = subSignalArraySizeGet(&tmp, widthStart);
+	int arraySize = ParseUtils::subSignalArraySizeGet(&tmp, widthStart);
 	if(0 >= arraySize)
 	{
 		nfiError("signalArraySizeGet failed\n");
@@ -862,8 +606,8 @@ int RtlFile::NeedleCorrupt(
 
 	case FI_NEEDLE_ASSIGN_NON_BLOCKIN:
 	{
-		const char * assigneeEnd = lastNonSpaceGet(needle - 1);
-		targetSignalStart = lastCharAfterGet(assigneeEnd, "\n )", 3);
+		const char * assigneeEnd = ParseUtils::lastNonSpaceGet(needle - 1);
+		targetSignalStart = ParseUtils::lastCharAfterGet(assigneeEnd, "\n )", 3);
 	}
 		break;
 
@@ -879,7 +623,7 @@ int RtlFile::NeedleCorrupt(
 	}
 
 	// Remove spaces
-	targetSignalStart = firstNonSpaceGet(targetSignalStart);
+	targetSignalStart = ParseUtils::firstNonSpaceGet(targetSignalStart);
 	nfiDebug("Needle expression: %.70s\n", targetSignalStart);
 
 	// Find end of signal name
@@ -908,7 +652,7 @@ int RtlFile::NeedleCorrupt(
 
 	// Remove spaces
 	targetSignalEndEqual -= 1; // remove char found above
-	targetSignalEndEqual = lastNonSpaceGet(targetSignalEndEqual);
+	targetSignalEndEqual = ParseUtils::lastNonSpaceGet(targetSignalEndEqual);
 
 	const char * targetSignalEnd = targetSignalEndEqual + 1; // one after last char
 
@@ -931,7 +675,7 @@ int RtlFile::NeedleCorrupt(
 		const char * currSignalStart = targetSignalName.data() + 1;
 		while(currSignalStart < compoundEnd)
 		{
-			currSignalStart = firstNonSpaceGet(currSignalStart);
+			currSignalStart = ParseUtils::firstNonSpaceGet(currSignalStart);
 
 			const char * nextSignalStart = strchr(currSignalStart, ',');
 			bool lastRound = false;
@@ -943,7 +687,7 @@ int RtlFile::NeedleCorrupt(
 
 			const char * currSignalEnd = nextSignalStart - 1;
 
-			currSignalEnd = lastNonSpaceGet(currSignalEnd);
+			currSignalEnd = ParseUtils::lastNonSpaceGet(currSignalEnd);
 
 			std::vector<char> tmpBuff(currSignalEnd + 1 - currSignalStart + 1);
 			memcpy(tmpBuff.data(), currSignalStart, currSignalEnd + 1 - currSignalStart);
@@ -1411,7 +1155,7 @@ int RtlFile::ModuleInstancesHandle(
 			}
 
 			if(' ' != *(instStart + module.first.size()) || // space between module name and instance name
-					!isSpace(*(instStart - 1)) || // otherwise "xxx<moduleName>" would be interpreted as instance of <moduleName>
+					!ParseUtils::isSpace(*(instStart - 1)) || // otherwise "xxx<moduleName>" would be interpreted as instance of <moduleName>
 					PosInsideComment(instStart, moduleStart, moduleEnd))
 			{
 				currPos = instStart + 1;
@@ -1653,7 +1397,7 @@ int RtlFile::LibraryCreate(const std::map<std::string, module_t> &modules, const
 	for(const auto &module: modules)
 	{
 		std::string moduleNameNoEscape;
-		backslashToDoubleBackslash(&moduleNameNoEscape, module.first);
+		ParseUtils::backslashToDoubleBackslash(&moduleNameNoEscape, module.first);
 
 		std::string toPrint;
 		toPrint += "\t{\n"; // start module
