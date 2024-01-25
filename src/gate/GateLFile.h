@@ -106,7 +106,7 @@ private:
         const char * end;
         std::vector<signal_t> FiSignal;
         std::vector<std::pair<void *, size_t>> InstanceUuids; // <module_t * instanceOfModulePointedTo, uuid>
-        std::vector<const char *> instancesList;
+        std::vector<int> instancesList;
     } module_t;
 
     static int ModuleFind(std::string *name, const char **start, const char **end, const char *pFile, size_t nFile);

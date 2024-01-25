@@ -1379,62 +1379,45 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 
 	nfiDebug("Hiearachy visit\n");
 
-#pragma omp parallel for
+#pragma omp parallel for shared(modules)
 	for (i = 0; i < threads; i++)
 	{
 		const char *Content_start = Content_ + CHUNCK_SIZE * i;
-		const char *filePos = Content_ + CHUNCK_SIZE * i;
-		// assign for each thread a given number of modules
-		int chunkSize = modules.size() / threads;
-
-		auto startIt = std::next(modules.begin(), threads * chunkSize);
-		auto endIt = (omp_get_thread_num() == threads - 1) ? modules.end() : std::next(startIt, chunkSize);
-
-		// Use the assigned portions
-		for (auto upp_module = startIt; upp_module != endIt; upp_module++)
+		// looking for all module instances in the file chunck
+		for (auto &upp_module : modules)
 		{
-
-			const char *moduleStart = upp_module->second.start;
-			const char *moduleEnd = upp_module->second.end;
-			const std::string moduleName = upp_module->first;
+			const char *filePos = Content_ + CHUNCK_SIZE * i;
+			//	const char *moduleStart = upp_module.second.start;
+			const char *moduleEnd = upp_module.second.end;
+			const std::string moduleName = upp_module.first;
 			nfiDebug("Looking for instances of %s from thread %d and from char %ld to %ld in file\n", moduleName.c_str(), omp_get_thread_num(), Content_start - Content_, Content_start - Content_ + CHUNCK_SIZE);
-			auto modIt = modules.find(moduleName);
-			if (modules.end() == modIt)
-			{
-				nfiError("No such module in list from thread %d\n", omp_get_thread_num());
-				// return -1;
-			}
 
 			// Find module instantiations in the chunck
 			do
 			{
 
 				// Find next instantiation
-				const char *instStart = strstr(filePos, upp_module->first.c_str());
-				if ((nullptr == instStart) || (moduleEnd < instStart))
+				const char *instStart = strstr(filePos, upp_module.first.c_str());
+				if ((nullptr == instStart))
 				{
 					break; // no more instances of this module in this module
 				}
-
-				if (' ' != *(instStart + upp_module->first.size()) || // space between module name and instance name
-					PosInsideComment(instStart, moduleStart, moduleEnd))
+				nfiDebug("\tChecking %s\n from thread %d\n", std::string(instStart, upp_module.first.size()).c_str(), omp_get_thread_num() s);
+				if ((moduleEnd < instStart))
 				{
+					/*cannot have an instance of module within the module declaration*/
+
+					nfiDebug("\tFound instance of '%s' from thread %d at char %ld\n", upp_module.first.c_str(), omp_get_thread_num(), instStart - Content_);
+
 #pragma omp critical
 					{
-						upp_module->second.instancesList.push_back(instStart);
+
+						upp_module.second.instancesList.push_back(instStart - Content_);
 					}
-					filePos = instStart + 1;
 				}
-
-				nfiDebug("\tFound instance of '%s' from thread %d at char %ld\n", upp_module->first.c_str(), omp_get_thread_num(),filePos - Content_);
-#pragma omp critical
-				{
-					modIt->second.InstanceUuids.push_back({&upp_module, 0}); // TODO: Dirty - UUIDs are set further below
-				}
-				filePos = instStart + upp_module->first.size();
-
-				// filePos++;
-
+				filePos = instStart;
+				filePos += upp_module.first.size(); /*this points to the i*/
+				filePos++;							/*to avoid moduleName moduleName_i instantations */
 			} while (filePos < Content_start + CHUNCK_SIZE);
 		}
 
@@ -1453,6 +1436,7 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 	if (nfiErrorCnt)
 	{
 		nfiFatal("There were %lu errors\n", nfiErrorCnt);
+		return -1;
 	}
 	const int hierarchyDepth = HierarchyDepthGet(modules, TopModule_);
 	if (0 >= hierarchyDepth)
@@ -1463,14 +1447,7 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 
 	nfiDebug("hierarchyDepth = %i\n", hierarchyDepth);
 
-	// TODO: This is dirty
-	// clear instances from modules...will be filled again below with UUIDs
-	for (auto &module : modules)
-	{
-		module.second.InstanceUuids.clear();
-	}
-
-	nfiDebug("Starting netlist modification for Fault injections ");
+	nfiDebug("Starting netlist modification for Fault injection\n");
 
 	// Add fiEnable to each module's input and corruption signal to all assignments
 	std::map<const char *, diff_t> diff; // <beginning of replace, replacement>
