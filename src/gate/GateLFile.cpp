@@ -948,7 +948,7 @@ int GateLFile::HierarchyDepthGet(const std::map<std::string, module_t> &modules,
 	// Or stop recursion if module contains no instances
 	std::vector<int> instDepth(topIt->second.InstanceUuids.size());
 	for (size_t inst = 0; inst < topIt->second.InstanceUuids.size(); inst++)
-	{
+	{	
 		const module_t *modPt = (module_t *)topIt->second.InstanceUuids[inst].first;
 		instDepth[inst] = HierarchyDepthGet(modules, modPt->Name);
 
@@ -1402,7 +1402,7 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 				{
 					break; // no more instances of this module in this module
 				}
-				nfiDebug("\tChecking %s\n from thread %d\n", std::string(instStart, upp_module.first.size()).c_str(), omp_get_thread_num() s);
+				nfiDebug("\tChecking %s\n from thread %d\n", std::string(instStart, upp_module.first.size()).c_str(), omp_get_thread_num());
 				if ((moduleEnd < instStart))
 				{
 					/*cannot have an instance of module within the module declaration*/
@@ -1412,7 +1412,7 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 #pragma omp critical
 					{
 
-						upp_module.second.instancesList.push_back(instStart - Content_);
+						upp_module.second.instancesList.push_back(instStart);
 					}
 				}
 				filePos = instStart;
@@ -1433,11 +1433,65 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 	}
 
 #endif /*VERBOSE_DEBUG*/
-	if (nfiErrorCnt)
+
+	for ( auto &module : modules)
 	{
-		nfiFatal("There were %lu errors\n", nfiErrorCnt);
-		return -1;
+		const char *moduleStart = module.second.start;
+		const char *moduleEnd = module.second.end;
+
+		for (auto &element : module.second.instancesList)
+		{
+
+			if (element >= moduleStart && element <= moduleEnd)
+			{
+				// error check
+				nfiError("Instance inside the same module for %s\n", module.first.c_str());
+			}
+			else
+			{
+				for ( auto &module_i : modules)
+				{
+					if (&module.second !=&module_i.second){
+					const char *moduleStart_i = module_i.second.start;
+					const char *moduleEnd_i = module_i.second.end;
+
+					if (element >= moduleStart_i && element <= moduleEnd_i )
+					{
+
+						module_i.second.InstanceUuids.push_back({&module, 0});
+						nfiDebug("Instance of %s in module %s\n", module.first.c_str(), module_i.first.c_str());
+					}
+				}
+			}
+			}
+		}
 	}
+
+#ifdef VERBOSE_DEBUG
+	nfiDebug("Printing per module instances");
+
+	for ( auto &module : modules)
+	{
+		nfiDebug("Module %s has the following instances (tot %ld) in \n", module.first.c_str(),module.second.InstanceUuids.size());
+		size_t instCount=1;
+		for ( auto &inst : module.second.InstanceUuids)
+		{
+			module_t *tmp = reinterpret_cast<module_t *>(inst.first);
+
+			if (nullptr == tmp)
+			{
+				nfiFatal("Error null pointer in instace UUid\n");
+			}
+			else
+			{
+				nfiDebug("\t Inst: %ld in %s\n",instCount, tmp->Name.c_str());
+			}
+			instCount++;
+		}
+	}
+
+#endif /*VERBOSE_DEBUG*/
+
 	const int hierarchyDepth = HierarchyDepthGet(modules, TopModule_);
 	if (0 >= hierarchyDepth)
 	{
