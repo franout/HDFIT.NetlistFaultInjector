@@ -12,6 +12,7 @@ static size_t uuidGet()
 
 GateLFile::GateLFile()
 {
+
 	// TODO Auto-generated constructor stub
 }
 
@@ -89,6 +90,7 @@ int GateLFile::Get(const char *fileName, const std::string &topModule)
 	return 0;
 }
 
+// todo I PROBABLY DO NOT NEED IT
 int GateLFile::GetLib(const char *fileName)
 {
 
@@ -146,6 +148,160 @@ int GateLFile::GetLib(const char *fileName)
 
 	LibContent_[LibSize_] = '\0';
 	LibSize_++;
+
+	return 0;
+}
+
+int GateLFile::ModuleInstancesHandle(
+	std::map<std::string, module_t>::iterator &currentModule,
+	std::map<std::string, module_t> *modules,
+	std::map<const char *, diff_t> *diff,
+	const char *moduleStart,
+	const char *moduleEnd,
+	const std::string &topModule,
+	size_t hierarchyDepth)
+{
+	// In top module the fi signal does not need a "top." up front
+	std::string fiEnableSignalStr;
+	if (currentModule->first == topModule)
+	{
+		fiEnableSignalStr = std::string(GlobalFiModInstNumber_);
+	}
+	else
+	{
+		fiEnableSignalStr = topModule + "." + std::string(GlobalFiModInstNumber_);
+	}
+
+	// Find module instantiations and add fiEnable signal to end
+	for (auto &module : *modules)
+	{
+		// const char *currPos = moduleStart;
+
+		for (auto &instance : module.second.instancesList)
+		{
+			const char *instStart = instance;
+			if (' ' != *(instStart + module.first.size()) || // space between module name and instance name
+				!ParseUtils::isSpace(*(instStart - 1)) ||	 // otherwise "xxx<moduleName>" would be interpreted as instance of <moduleName>
+				PosInsideComment(instStart, moduleStart, moduleEnd))
+			{
+				instStart = instStart + 1;
+				// continue;
+			}
+
+			nfiDebug("\tFound instance of '%s'\n", module.first.c_str());
+
+			// Add it to module instances vector
+			const size_t instUuid = uuidGet();
+			currentModule->second.InstanceUuids.push_back({&module, instUuid});
+
+			// Add fiEnable to end of inputs
+			const char *endOfInputs = strstr(instStart, ");");
+			if ((nullptr == endOfInputs) || (moduleEnd < endOfInputs))
+			{
+				nfiError("Could not find end of inputs for module instance\n");
+				// return -1;
+			}
+
+			// Check for illegal semi-colon in between
+			const char *illSemiColon = strchr(instStart, ';');
+			if ((nullptr != illSemiColon) && (illSemiColon < endOfInputs))
+			{
+				nfiError("Unexpected semi-colon in inputs for module instance\n");
+				// return -1;
+			}
+
+			endOfInputs--; // before end of inputs
+			while (('\n' == *endOfInputs) || (' ' == *endOfInputs))
+			{
+				endOfInputs--;
+			}
+			endOfInputs += 1;
+
+			if (diff->end() != diff->find(endOfInputs))
+			{
+				nfiError("diff already in diff map\n");
+				// return -1;
+			}
+
+			auto &diffIt = (*diff)[endOfInputs];
+
+			diffIt.End = endOfInputs;
+			diffIt.Replacement = ",\n";
+			diffIt.Replacement += "    ." + std::string(FiEnableStr) + "(";
+			diffIt.Replacement += std::string(FiEnableStr) + " && (";
+			for (size_t hier = 0; hier < hierarchyDepth; hier++)
+			{
+				diffIt.Replacement += "(" + std::to_string(instUuid) + " == " +
+									  std::string(fiEnableSignalStr) + "[" + std::to_string(hier) + "])";
+
+				if (hier < hierarchyDepth - 1)
+				{
+					diffIt.Replacement += " || ";
+				}
+			}
+			diffIt.Replacement += "))";
+		}
+	}
+
+	return 0;
+}
+
+int GateLFile::GlobalSignalsToTopAdd(std::map<const char *, diff_t> *diff, const char *start, const char *stop, size_t fiSignalWidth, size_t hierarchyDepth)
+{
+	const char *ioEnd = strstr(start, ");");
+	if (nullptr == ioEnd)
+	{
+		nfiError("Could not find end of io\n");
+		return -1;
+	}
+
+	if (PosInsideComment(ioEnd, start, stop))
+	{
+		return GlobalSignalsToTopAdd(diff, start, stop, fiSignalWidth, hierarchyDepth);
+	}
+
+	const char *singleSemiColon = strchr(start, ';');
+	if ((nullptr != singleSemiColon) && (singleSemiColon < ioEnd))
+	{
+		nfiError("Unexpected ';'\n");
+		return -1;
+	}
+
+	const char *replaceStart = ioEnd; // before );
+
+	if (diff->end() != diff->find(replaceStart))
+	{
+		nfiError("ioEnd already diff'ed\n");
+		return -1;
+	}
+
+	auto &diffIt = (*diff)[replaceStart];
+	diffIt.Replacement = ", ";
+	diffIt.Replacement += std::string(GlobalFiSignal_) + ", ";
+	diffIt.Replacement += std::string(GlobalFiNumber_) + ", ";
+	diffIt.Replacement += GlobalFiModInstNumber_;
+	diffIt.Replacement += ");\n";
+	diffIt.Replacement += "input " + std::string(GlobalFiSignal_) + ";\n";
+	diffIt.Replacement += "wire [" + std::to_string(fiSignalWidth - 1) + ":0] " + std::string(GlobalFiSignal_) + ";\n";
+	diffIt.Replacement += "input " + std::string(GlobalFiNumber_) + ";\n";
+	diffIt.Replacement += "wire [31:0] " + std::string(GlobalFiNumber_) + ";\n";
+	diffIt.Replacement += "input " + std::string(GlobalFiModInstNumber_) + ";\n";
+	diffIt.Replacement += "wire [15:0] " + std::string(GlobalFiModInstNumber_) + "[" + std::to_string(hierarchyDepth) + "];\n";
+	diffIt.Replacement += "wire " + std::string(FiEnableStr) + ";\n";
+	diffIt.Replacement += "assign " + std::string(FiEnableStr) + " = ";
+	for (int hier = 0; hier < hierarchyDepth; hier++)
+	{
+		diffIt.Replacement += "(" + std::to_string(GlobalFiModInstNumberTop_) + " == " +
+							  std::string(GlobalFiModInstNumber_) + "[" + std::to_string(hier) + "])";
+
+		if (hier != hierarchyDepth - 1)
+		{
+			diffIt.Replacement += " || ";
+		}
+	}
+	diffIt.Replacement += ";\n";
+
+	diffIt.End = ioEnd + 2; // after ");"
 
 	return 0;
 }
@@ -505,6 +661,17 @@ int GateLFile::SubSignalWidthGet(const std::string &inSubSignal, const char *inM
 	return arraySize;
 }
 
+int GateLFile::AddDontTouch(std::vector<std::string> FileList)
+{
+	for (auto file : FileList)
+	{
+		nfiDebug("Reading %s\n", file.c_str());
+		dontTouch.Get(file);
+	}
+
+	return 0;
+}
+
 int GateLFile::NeedleCorrupt(
 	fiMode_t fiMode, module_t *module, std::map<const char *, diff_t> *diff,
 	const std::string &fiPrefix, const char *moduleStart, const char *moduleEnd, const char *needle, fiNeedle_t needleNr)
@@ -538,7 +705,7 @@ int GateLFile::NeedleCorrupt(
 	}
 
 	// Remove spaces
-	targetSignalStart = ParseUtils::firstNonSpaceGet(targetSignalStart);
+	// targetSignalStart = ParseUtils::firstNonSpaceGet(targetSignalStart);
 	nfiDebug("Needle expression: %.70s\n", targetSignalStart);
 
 	// Find end of signal name
@@ -572,6 +739,14 @@ int GateLFile::NeedleCorrupt(
 	const char *targetSignalEnd = targetSignalEndEqual + 1; // one after last char
 
 	std::vector<char> targetSignalName(targetSignalEnd - targetSignalStart + 1);
+	std::string targetSignalNameStr(targetSignalStart, targetSignalEnd - targetSignalStart + 1);
+	if (GateLFile::dontTouch.isDontTouch(targetSignalNameStr))
+	{
+		// do not corupt signal
+		nfiDebug("Signal %s is dont touch\n", targetSignalNameStr.c_str());
+		return 0;
+	}
+
 	memcpy(targetSignalName.data(), targetSignalStart, targetSignalEnd - targetSignalStart);
 	targetSignalName[targetSignalEnd - targetSignalStart] = '\0';
 
@@ -948,7 +1123,7 @@ int GateLFile::HierarchyDepthGet(const std::map<std::string, module_t> &modules,
 	// Or stop recursion if module contains no instances
 	std::vector<int> instDepth(topIt->second.InstanceUuids.size());
 	for (size_t inst = 0; inst < topIt->second.InstanceUuids.size(); inst++)
-	{	
+	{
 		const module_t *modPt = (module_t *)topIt->second.InstanceUuids[inst].first;
 		instDepth[inst] = HierarchyDepthGet(modules, modPt->Name);
 
@@ -1038,11 +1213,11 @@ int GateLFile::ModuleFind(std::string *name, const char **start, const char **en
 	}
 	modNameEnd++; // be one after end again
 
-	// Module inside comment? Impossible, it is a post synthesis
-	// if(PosInsideComment(modStart, pFile, pFile + nFile))
-	//{
-	//	return ModuleFind(name, start, end, modStart, nFile - (modStart - pFile));
-	//}
+	// Module inside comment?
+	if (PosInsideComment(modStart, pFile, pFile + nFile))
+	{
+		return ModuleFind(name, start, end, modStart, nFile - (modStart - pFile));
+	}
 
 	// Save module name
 	if (modNameEnd == modStart)
@@ -1153,12 +1328,12 @@ int GateLFile::DiffApply(std::map<const char *, diff_t> &diff)
 		const size_t oldToCopySize = lastReadPosOld - it->second.End;
 
 		nextWritePosNew -= oldToCopySize - 1;
-		if (newContent > nextWritePosNew)
-		{
-			nfiError("Copy size too large\n");
-			free(newContent);
-			return -1;
-		}
+		/*	if (newContent > nextWritePosNew)
+			{
+				nfiError("Copy size too large\n");
+				free(newContent);
+				return -1;
+			}*/
 		memcpy(nextWritePosNew, lastReadPosOld - oldToCopySize, oldToCopySize);
 
 		// Copy diff
@@ -1224,7 +1399,7 @@ int GateLFile::ModuleFi(
 			return -1;
 		}
 	}
-
+	nfiInfo("here");
 	// Find all fi needles and add corruption
 	const char *pos = start;
 	do
@@ -1306,9 +1481,7 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 	int modulesCnt = 0;
 #endif /*VERBOSE_DEBUG*/
 
-	// TODO parallel check of errors
-
-#pragma omp parallel for
+#pragma omp parallel for shared(modules, Content_)
 	for (i = 0; i < threads; i++)
 	{
 		const char *Content_start = Content_ + CHUNCK_SIZE * i;
@@ -1333,7 +1506,6 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 			if (0 > modFindRet)
 			{
 				nfiError("moduleFind failed from thread %d\n", omp_get_thread_num());
-				// return -1;
 			}
 			else if (0 == modFindRet)
 			{
@@ -1343,21 +1515,19 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 			if (200 < moduleName.size())
 			{
 				nfiError("Module name longer than 200 chars: %.200s from thread %d\n", moduleName.c_str(), omp_get_thread_num());
-				// return -1;
 			}
 
 			nfiDebug("\tFound module %s\n", moduleName.c_str());
-
-			if (modules.end() != modules.find(moduleName))
-			{
-				// deprecated to warning since it may happen with parallel processing of the file
-				nfiWarning("Module already in modules from thread %d\n", omp_get_thread_num());
-				// return -1;
-			}
-			else
-			{
 #pragma omp critical
+			{
+				if (modules.end() != modules.find(moduleName))
 				{
+					// deprecated to warning since it may happen with parallel processing of the file
+					nfiWarning("Module already in modules from thread %d\n", omp_get_thread_num());
+				}
+				else
+				{
+
 					modules[moduleName].Name = moduleName;
 					// lets save start and end
 					modules[moduleName].start = moduleStart;
@@ -1375,11 +1545,16 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 		} while (filePos < Content_start + CHUNCK_SIZE);
 	} // omp parallel for
 
+	if (nfiErrorCnt)
+	{
+		nfiError("Error in modules discovery\n");
+		return -1;
+	}
 	nfiDebug("Number of Modules find %d\n", modulesCnt);
 
-	nfiDebug("Hiearachy visit\n");
+	nfiDebug("Instance visit\n");
 
-#pragma omp parallel for shared(modules)
+#pragma omp parallel for shared(modules, Content_)
 	for (i = 0; i < threads; i++)
 	{
 		const char *Content_start = Content_ + CHUNCK_SIZE * i;
@@ -1398,21 +1573,25 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 
 				// Find next instantiation
 				const char *instStart = strstr(filePos, upp_module.first.c_str());
+
 				if ((nullptr == instStart))
 				{
 					break; // no more instances of this module in this module
 				}
 				nfiDebug("\tChecking %s\n from thread %d\n", std::string(instStart, upp_module.first.size()).c_str(), omp_get_thread_num());
-				if ((moduleEnd < instStart))
+
+				if (moduleEnd < instStart && ' ' == *(instStart + upp_module.first.size()))
 				{
 					/*cannot have an instance of module within the module declaration*/
 
 					nfiDebug("\tFound instance of '%s' from thread %d at char %ld\n", upp_module.first.c_str(), omp_get_thread_num(), instStart - Content_);
-
 #pragma omp critical
 					{
-
-						upp_module.second.instancesList.push_back(instStart);
+						if (std::find(upp_module.second.instancesList.begin(), upp_module.second.instancesList.end(), instStart) == upp_module.second.instancesList.end())
+						{
+							// instStart is not in the instancesList, so push it
+							upp_module.second.instancesList.push_back(instStart);
+						}
 					}
 				}
 				filePos = instStart;
@@ -1424,7 +1603,7 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 	} // omp parallel for
 
 #ifdef VERBOSE_DEBUG
-	nfiDebug("Printing instances for modules");
+	nfiDebug("Printing instances for modules\n");
 
 	for (auto &module : modules)
 	{
@@ -1434,7 +1613,13 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 
 #endif /*VERBOSE_DEBUG*/
 
-	for ( auto &module : modules)
+	if (nfiErrorCnt)
+	{
+		nfiError("Error in instance visit\n");
+		return -1;
+	}
+
+	for (auto &module : modules)
 	{
 		const char *moduleStart = module.second.start;
 		const char *moduleEnd = module.second.end;
@@ -1449,45 +1634,37 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 			}
 			else
 			{
-				for ( auto &module_i : modules)
+				for (auto &module_i : modules)
 				{
-					if (&module.second !=&module_i.second){
-					const char *moduleStart_i = module_i.second.start;
-					const char *moduleEnd_i = module_i.second.end;
-
-					if (element >= moduleStart_i && element <= moduleEnd_i )
+					if (&module.second != &module_i.second) /*cannot have an instance within itself*/
 					{
+						const char *moduleStart_i = module_i.second.start;
+						const char *moduleEnd_i = module_i.second.end;
 
-						module_i.second.InstanceUuids.push_back({&module, 0});
-						nfiDebug("Instance of %s in module %s\n", module.first.c_str(), module_i.first.c_str());
+						if (element > moduleStart_i && element < moduleEnd_i)
+						{
+
+							module_i.second.InstanceUuids.push_back({&module, 0});
+							nfiDebug("Instance of %s in module %s\n", module.first.c_str(), module_i.first.c_str());
+						}
 					}
 				}
-			}
 			}
 		}
 	}
 
-#ifdef VERBOSE_DEBUG
-	nfiDebug("Printing per module instances");
-
-	for ( auto &module : modules)
+	if (nfiErrorCnt)
 	{
-		nfiDebug("Module %s has the following instances (tot %ld) in \n", module.first.c_str(),module.second.InstanceUuids.size());
-		size_t instCount=1;
-		for ( auto &inst : module.second.InstanceUuids)
-		{
-			module_t *tmp = reinterpret_cast<module_t *>(inst.first);
+		nfiError("Error in linking hierarchy\n");
+		return -1;
+	}
 
-			if (nullptr == tmp)
-			{
-				nfiFatal("Error null pointer in instace UUid\n");
-			}
-			else
-			{
-				nfiDebug("\t Inst: %ld in %s\n",instCount, tmp->Name.c_str());
-			}
-			instCount++;
-		}
+#ifdef VERBOSE_DEBUG
+	nfiDebug("Printing per module instances Uuid\n");
+
+	for (auto &module : modules)
+	{
+		nfiDebug("Module %s has the following instances Uuids (tot %ld) siez \n", module.first.c_str(), module.second.InstanceUuids.size());
 	}
 
 #endif /*VERBOSE_DEBUG*/
@@ -1498,7 +1675,6 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 		nfiError("HierarchyDepthGet failed\n");
 		return -1;
 	}
-
 	nfiDebug("hierarchyDepth = %i\n", hierarchyDepth);
 
 	nfiDebug("Starting netlist modification for Fault injection\n");
@@ -1509,7 +1685,7 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 #pragma omp parallel for
 	for (i = 0; i < threads; i++)
 	{
-		/*iterate in parallel over a chunck and for each module add fi signals*/
+		// iterate in parallel over a chunck and for each module add fi signals
 		const char *Content_start = Content_ + CHUNCK_SIZE * i;
 		const char *filePos = Content_ + CHUNCK_SIZE * i;
 		const char *lineStart = Content_ + CHUNCK_SIZE * i;
@@ -1541,7 +1717,6 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 			if (200 < moduleName.size())
 			{
 				nfiError("Module name longer than 200 chars: %.200s from thread %d\n", moduleName.c_str(), omp_get_thread_num());
-				// return -1;
 			}
 
 			nfiDebug("Insert FI for module %s from thread %d\n", moduleName.c_str(), omp_get_thread_num());
@@ -1553,7 +1728,6 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 			if (ModuleFi(moduleIsTop, fiPrefix, fiMode, &modules[moduleName], &diff, moduleStart, moduleEnd))
 			{
 				nfiError("moduleFi failed\n");
-				// return -1;
 			}
 
 			// Prepare next round
@@ -1564,6 +1738,11 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 		} while (filePos < Content_start + CHUNCK_SIZE);
 	} // omp parallel for
 
+	if (nfiErrorCnt)
+	{
+		nfiError("Error in adding FI signals\n");
+		return -1;
+	}
 	// Apply Diff
 	if (DiffApply(diff))
 	{
@@ -1588,10 +1767,89 @@ int GateLFile::FiSignalsCreate(fiMode_t fiMode, const int threads)
 			}
 		}
 	}
-	// TODO for gate level it is probably 1 (single wire fault injection)
+
 	nfiDebug("Largest signal: %lu\n", largestWidth);
 #endif // FI_SINGLE_BIT
 
+	// Associate UUID to each module instance and set fiEnable input
+	/*	const char *filePos = Content_;
+		do {
+			std::string moduleName;
+			const char * moduleStart;
+			const char * moduleEnd;
+			const int modFindRet = ModuleFind(
+					&moduleName, &moduleStart, &moduleEnd,
+					filePos, Size_ - (filePos - Content_));
+
+			if(0 > modFindRet)
+			{
+				nfiError("moduleFind failed\n");
+				return -1;
+			}
+			else if(0 == modFindRet)
+			{
+				break;
+			}
+
+			nfiDebug("Module declaration %s\n", moduleName.c_str());
+			auto modIt = modules.find(moduleName);
+			if(modules.end() == modIt)
+			{
+				nfiError("No such module in list\n");
+				return -1;
+			}
+
+			if(ModuleInstancesHandle(modIt, &modules, &diff, moduleStart, moduleEnd, TopModule_, hierarchyDepth))
+			{
+				nfiError("ModuleInstancesHandle failed\n");
+				return -1;
+			}
+
+			// If it's top module, add global inputs
+			if(modIt->first == TopModule_)
+			{
+				if(GlobalSignalsToTopAdd(&diff, moduleStart, moduleEnd, largestWidth, hierarchyDepth))
+				{
+					nfiError("GlobalSignalsToTopAdd failed\n");
+					return -1;
+				}
+			}
+
+			// Prepare next round
+			filePos = moduleEnd;
+
+		} while(filePos < Content_ + Size_);*/
+	// Associate UUID to each module instance and set fiEnable input
+	for (auto &module : modules)
+	{
+		const char *moduleStart = module.second.start;
+		const char *moduleEnd = module.second.end;
+
+		nfiDebug("Module declaration %s\n", module.first.c_str());
+
+		auto modIt = modules.find(module.first);
+		if (ModuleInstancesHandle(modIt, &modules, &diff, moduleStart, moduleEnd, TopModule_, hierarchyDepth))
+		{
+			nfiError("ModuleInstancesHandle failed\n");
+			// return -1;
+		}
+
+		// If it's top module, add global inputs
+		if (module.first == TopModule_)
+		{
+			if (GlobalSignalsToTopAdd(&diff, moduleStart, moduleEnd, largestWidth, hierarchyDepth))
+			{
+				nfiError("GlobalSignalsToTopAdd failed\n");
+				//	return -1;
+			}
+		}
+	}
+
+	/*	if(nfiErrorCnt){
+			nfiError("Error in adding fiEnable input and its association\n");
+			return -1;
+		}
+	*/
 	// Apply Diff
 	if (DiffApply(diff))
 	{

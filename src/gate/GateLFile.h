@@ -21,10 +21,12 @@
 #ifndef GATELFILE_H_
 #define GATELFILE_H_
 
+#include "DontTouchSignals.h"
+
 #include <string>
 #include <map>
 #include <vector>
-
+#include <algorithm>
 
 class GateLFile
 {
@@ -45,7 +47,7 @@ public:
         FI_MODE_STUCK_LOW,
         FI_MODE_FLIP
     } fiMode_t;
-
+    int AddDontTouch(std::vector<std::string> FileList);
     int FiSignalsCreate(fiMode_t fiMode,const int threads);
     int WriteBack() const;
 
@@ -60,6 +62,8 @@ private:
     size_t LibSize_ = 0;
 
     std::string TopModule_;
+
+    static inline DontTouchSignals dontTouch;
 
     typedef struct
     {
