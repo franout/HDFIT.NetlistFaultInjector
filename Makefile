@@ -22,7 +22,7 @@ LDFLAGS= -fopenmp
 
 EXE = netlistFaultInjector
 
-SRCS := ./src/main.cpp ./src/rtl/RtlFile.cpp ./src/gate/GateLFile.cpp ./src/common/common.cpp
+SRCS := ./src/main.cpp ./src/rtl/RtlFile.cpp ./src/gate/GateLFile.cpp ./src/common/common.cpp ./src/gate/DontTouchSignals.cpp
 OBJS := $(patsubst ./src/%.cpp, ./build/%.o, $(SRCS))
 
 all: $(EXE)

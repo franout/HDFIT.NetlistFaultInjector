@@ -266,3 +266,11 @@ int ParseUtils::subSignalArraySizeGet(const char ** endArray, const char * in)
 
 	return abs(widthHigh - widthLow) + 1;
 }
+
+
+
+bool ParseUtils::has_suffix(const std::string &str, const std::string &suffix)
+{
+    return str.size() >= suffix.size() &&
+           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}

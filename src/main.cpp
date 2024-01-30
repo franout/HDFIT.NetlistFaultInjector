@@ -24,6 +24,7 @@
 
 #include "common.h"
 #include <getopt.h>
+#include <sstream> 
 
 size_t nfiErrorCnt = 0;
 
@@ -39,7 +40,9 @@ typedef struct
 	std::string TopModule;
 	FileType_T FileType;
 	std::string LibFile;
-	int threads=1;
+	int threads = 1;
+	bool dontTouchSignalsPresent = false;
+	std::vector<std::string> dontTouchSignalsFileList;
 } userConfig_t;
 
 static std::string Usage(void)
@@ -48,7 +51,9 @@ static std::string Usage(void)
 		-i --input-file input verilog file to inject signals\n\
 		-t --top top module to inject signals in\n\
 		-gate/RTL verilog file type\n\
-		-l --lib-file library verilog file \n";
+		-l --lib-file library verilog file \n\
+		-d --dont-touch use dont touch signals for fault injections\n\
+		-f --file-signals list of files separated by , in which are defined dont touch signals name (per line in txt) or stil definition for scan chain\n";
 
 	return usage;
 }
@@ -56,7 +61,8 @@ static std::string Usage(void)
 static int argParse(userConfig_t *config, int argc, char **argv)
 {
 	int c;
-	
+	std::istringstream iss;
+	std::string token;
 	static struct option long_options[] = {
 		{"input-file", required_argument, 0, 'i'},
 		{"gate", no_argument, 0, 2},
@@ -64,19 +70,20 @@ static int argParse(userConfig_t *config, int argc, char **argv)
 		{"top", required_argument, 0, 'm'},
 		{"lib-file", required_argument, 0, 'l'},
 		{"threads", required_argument, 0, 't'},
+		{"dont-touch", no_argument, 0, 'd'},
+		{"file-signals", required_argument, 0, 'f'},
 		{0, 0, 0, 0}};
 
 	while (1)
 	{
 		int option_index;
-		c = getopt_long(argc, argv, "i:m:l:t:",
+		c = getopt_long(argc, argv, "i:m:l:t:df:",
 						long_options, &option_index);
 		if (c == -1)
 			break;
 
 		switch (c)
 		{
-		case 0:
 		case 'i':
 			/*input file */
 			config->File = optarg;
@@ -91,26 +98,33 @@ static int argParse(userConfig_t *config, int argc, char **argv)
 			config->FileType = GATE;
 
 			break;
-		case 3:
 		case 'm':
 			/*top*/
 			config->TopModule = optarg;
 			break;
-		case 4:
 		case 'l':
 			config->LibFile = optarg;
 			break;
-		case 5:
 		case 't':
-			config->threads= std::stoi(optarg);
+			config->threads = std::stoi(optarg);
 			break;
-		case '?':
+		case 'd':
+			config->dontTouchSignalsPresent = true;
+			break;
+		case 'f':
+			iss.str(optarg);
+			while (std::getline(iss, token, ','))
+			{
+				config->dontTouchSignalsFileList.push_back(token);
+			}
+			break;
 		default:
+		case '?':
 			nfiError("%s\n", Usage().c_str());
 			return -1;
 		}
 	}
-	
+
 	if (optind < argc)
 	{
 		nfiError("Non-option ARGV-elements\n");
@@ -122,9 +136,9 @@ static int argParse(userConfig_t *config, int argc, char **argv)
 	{
 		nfiWarning("Warning! Passed Library file in RTL parsing type\n");
 	}
-	else if (config->FileType == GATE && config->LibFile == "")
+	else if (config->FileType == GATE && config->dontTouchSignalsFileList.size() < 1)
 	{
-		nfiFatal("Error! No library file defined in Gate parsing type\n");
+		nfiFatal("Error! No dont touch signals file defined in Gate parsing type\n");
 		return -1;
 	}
 
@@ -134,12 +148,12 @@ static int argParse(userConfig_t *config, int argc, char **argv)
 int main(int argc, char **argv)
 {
 	userConfig_t userConfig;
-	
+
 	if (argParse(&userConfig, argc, argv))
 	{
 		nfiFatal("argParse failed\n");
 	}
-	
+
 	if (userConfig.FileType == GATE)
 	{
 		// get files
@@ -148,13 +162,19 @@ int main(int argc, char **argv)
 		{
 			nfiFatal("fileGet failed\n");
 		}
-		
+			if (userConfig.dontTouchSignalsPresent){
+				if(gateLFile.AddDontTouch(userConfig.dontTouchSignalsFileList)){
+					nfiFatal("Dont Touch files failed\n");
+				}
+
+			}
+		// todo probably to remove
 		if (gateLFile.GetLib(userConfig.LibFile.c_str()))
 		{
 			nfiFatal("LibfileGet failed\n");
 		}
 
-		if (gateLFile.FiSignalsCreate(GateLFile::FI_MODE_FLIP,userConfig.threads)) // TODO fault injection can become a class
+		if (gateLFile.FiSignalsCreate(GateLFile::FI_MODE_FLIP, userConfig.threads)) // TODO fault injection can become a class
 		{
 			nfiFatal("Failed to insert FiSignals\n");
 		}

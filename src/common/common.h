@@ -104,6 +104,8 @@ const char *lastCharAfterGet(const char *in, const char *pNeedles, size_t nNeedl
 int signalArraySizeGet(const char ** endArray, const char * in);
 int signalWidthGet(const char ** endWidth, const char * in);
 int subSignalArraySizeGet(const char ** endArray, const char * in);
+bool has_suffix(const std::string &str, const std::string &suffix);
+
 
 }
 
